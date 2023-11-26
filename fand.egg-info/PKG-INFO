@@ -1,0 +1,10 @@
+Metadata-Version: 2.1
+Name: fand
+Version: 0.0.1
+Summary: CPU temperature monitor 0.0.1
+Author: Vladimir Gusenkov
+Author-email: gusenkovvladimir@yandex.ru
+License: BSD
+Platform: any
+Requires-Python: >=3.4
+License-File: LICENSE

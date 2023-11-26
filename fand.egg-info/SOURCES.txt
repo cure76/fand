@@ -1,0 +1,9 @@
+LICENSE
+fand.py
+fand.service
+setup.py
+fand.egg-info/PKG-INFO
+fand.egg-info/SOURCES.txt
+fand.egg-info/dependency_links.txt
+fand.egg-info/requires.txt
+fand.egg-info/top_level.txt

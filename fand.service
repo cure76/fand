@@ -1,0 +1,15 @@
+[Unit]
+Description="CPU temperature monitor"
+After=network.target network-online.target
+
+[Service]
+Type=simple
+User=fand
+Group=gpio
+Restart=always
+#ExecStartPre=/bin/mkdir -p /var/run/fand
+#PIDFile=/var/run/fand/service.pid
+ExecStart=/usr/bin/python3 /usr/bin/fand.py > /dev/null 2>&1
+
+[Install]
+WantedBy=multi-user.target

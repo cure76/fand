@@ -1,0 +1,46 @@
+#!/bin/sh
+set -e
+
+if which py3compile >/dev/null 2>&1; then
+        py3compile -p python3-fand
+fi
+if which pypy3compile >/dev/null 2>&1; then
+        pypy3compile -p python3-fand  || true
+fi
+
+
+username="fand"
+sharedir="/usr/share/fand"
+
+
+case "$1" in
+        configure)
+
+          if ! getent passwd ${username} >/dev/null;
+          then
+            echo "Adding user "${username}
+            adduser --disabled-password --ingroup gpio --home /run/fand --system \
+              --shell /usr/sbin/nologin --gecos "Fan daemon" ${username}
+          fi
+
+          if [ ! -L $sharedir ]
+          then
+            /bin/cp ${sharedir}/fand.service /lib/systemd/system/fand.service
+          fi
+          echo "for run use: \n
+            sudo systemctl enable fand.service
+            sudo systemctl start fand.service\n"
+        ;;
+
+        abort-upgrade|abort-remove|abort-deconfigure)
+                exit 0
+        ;;
+
+        *)
+                echo "postinst called with unknown argument \`$1'" >&2
+                exit 1
+        ;;
+
+esac
+
+exit 0

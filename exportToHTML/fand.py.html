@@ -1,0 +1,164 @@
+<html>
+<head>
+<title>fand.py</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #8c8c8c; font-style: italic;}
+.s1 { color: #080808;}
+.s2 { color: #008080; font-weight: bold;}
+.s3 { color: #0033b3;}
+.s4 { color: #1750eb;}
+.s5 { color: #0037a6;}
+.ln { color: #adadad; font-weight: normal; font-style: normal; }
+</style>
+</head>
+<body bgcolor="#ffffff">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#c0c0c0" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+fand.py</font>
+</center></td></tr></table>
+<pre><a name="l1"><span class="ln">1    </span></a><span class="s0">#!/usr/bin/env python3</span>
+<a name="l2"><span class="ln">2    </span></a><span class="s0"># -*- coding: utf-8 -*-</span>
+<a name="l3"><span class="ln">3    </span></a><span class="s0"># vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4</span>
+<a name="l4"><span class="ln">4    </span></a>
+<a name="l5"><span class="ln">5    </span></a><span class="s1">__version__ = </span><span class="s2">'.'</span><span class="s1">.join(map(</span><span class="s3">lambda </span><span class="s1">i: </span><span class="s2">&quot;%s&quot; </span><span class="s1">% i, (</span><span class="s4">0</span><span class="s1">, </span><span class="s4">0</span><span class="s1">, </span><span class="s4">1</span><span class="s1">)))</span>
+<a name="l6"><span class="ln">6    </span></a>
+<a name="l7"><span class="ln">7    </span></a><span class="s3">import </span><span class="s1">sys</span>
+<a name="l8"><span class="ln">8    </span></a><span class="s3">import </span><span class="s1">copy</span>
+<a name="l9"><span class="ln">9    </span></a><span class="s3">import </span><span class="s1">datetime</span>
+<a name="l10"><span class="ln">10   </span></a><span class="s3">import </span><span class="s1">asyncio</span>
+<a name="l11"><span class="ln">11   </span></a><span class="s3">import </span><span class="s1">socket</span>
+<a name="l12"><span class="ln">12   </span></a><span class="s3">import </span><span class="s1">warnings</span>
+<a name="l13"><span class="ln">13   </span></a>
+<a name="l14"><span class="ln">14   </span></a><span class="s3">from </span><span class="s1">http.server </span><span class="s3">import </span><span class="s1">BaseHTTPRequestHandler</span>
+<a name="l15"><span class="ln">15   </span></a><span class="s3">from </span><span class="s1">io </span><span class="s3">import </span><span class="s1">BytesIO</span>
+<a name="l16"><span class="ln">16   </span></a>
+<a name="l17"><span class="ln">17   </span></a><span class="s3">try</span><span class="s1">:</span>
+<a name="l18"><span class="ln">18   </span></a>    <span class="s3">from </span><span class="s1">gpiozero </span><span class="s3">import </span><span class="s1">CPUTemperature, LED</span>
+<a name="l19"><span class="ln">19   </span></a>
+<a name="l20"><span class="ln">20   </span></a><span class="s3">except </span><span class="s1">ImportError:</span>
+<a name="l21"><span class="ln">21   </span></a>    <span class="s1">warnings.warn(</span><span class="s2">&quot;Warning: gpiozero not installed&quot;</span><span class="s1">)</span>
+<a name="l22"><span class="ln">22   </span></a>
+<a name="l23"><span class="ln">23   </span></a>
+<a name="l24"><span class="ln">24   </span></a><span class="s1">HOST = </span><span class="s2">'0.0.0.0'</span>
+<a name="l25"><span class="ln">25   </span></a><span class="s1">PORT = </span><span class="s4">9527</span>
+<a name="l26"><span class="ln">26   </span></a>
+<a name="l27"><span class="ln">27   </span></a>
+<a name="l28"><span class="ln">28   </span></a><span class="s3">class </span><span class="s1">HTTPRequest(BaseHTTPRequestHandler):</span>
+<a name="l29"><span class="ln">29   </span></a>    <span class="s3">def </span><span class="s1">__init__(self, request_text):</span>
+<a name="l30"><span class="ln">30   </span></a>        <span class="s1">self.rfile = BytesIO(request_text)</span>
+<a name="l31"><span class="ln">31   </span></a>        <span class="s1">self.raw_requestline = self.rfile.readline()</span>
+<a name="l32"><span class="ln">32   </span></a>        <span class="s1">self.error_code = self.error_message = </span><span class="s3">None</span>
+<a name="l33"><span class="ln">33   </span></a>        <span class="s1">self.parse_request()</span>
+<a name="l34"><span class="ln">34   </span></a>
+<a name="l35"><span class="ln">35   </span></a>    <span class="s3">def </span><span class="s1">send_error(self, code, message):</span>
+<a name="l36"><span class="ln">36   </span></a>        <span class="s1">self.error_code = code</span>
+<a name="l37"><span class="ln">37   </span></a>        <span class="s1">self.error_message = message</span>
+<a name="l38"><span class="ln">38   </span></a>
+<a name="l39"><span class="ln">39   </span></a>
+<a name="l40"><span class="ln">40   </span></a><span class="s3">class </span><span class="s1">CPUTemperatureMonitor(object):</span>
+<a name="l41"><span class="ln">41   </span></a>    <span class="s1">periodic_ttl = </span><span class="s4">5</span>
+<a name="l42"><span class="ln">42   </span></a>    <span class="s1">logsize = </span><span class="s4">60</span>
+<a name="l43"><span class="ln">43   </span></a>    <span class="s1">t = </span><span class="s4">0</span>
+<a name="l44"><span class="ln">44   </span></a>    <span class="s1">t_on = </span><span class="s4">60</span>
+<a name="l45"><span class="ln">45   </span></a>    <span class="s1">t_off_offset = </span><span class="s4">10</span>
+<a name="l46"><span class="ln">46   </span></a>
+<a name="l47"><span class="ln">47   </span></a>    <span class="s3">def </span><span class="s1">__init__(self):</span>
+<a name="l48"><span class="ln">48   </span></a>        <span class="s1">self.data = [</span><span class="s3">None for </span><span class="s1">i </span><span class="s3">in </span><span class="s1">range(self.logsize)]</span>
+<a name="l49"><span class="ln">49   </span></a>        <span class="s1">self.fun = LED(</span><span class="s4">14</span><span class="s1">)</span>
+<a name="l50"><span class="ln">50   </span></a>        <span class="s1">self.t_off = self.t_on - self.t_off_offset</span>
+<a name="l51"><span class="ln">51   </span></a>
+<a name="l52"><span class="ln">52   </span></a>    <span class="s3">def </span><span class="s1">append(self, x):</span>
+<a name="l53"><span class="ln">53   </span></a>        <span class="s1">self.data.pop(</span><span class="s4">0</span><span class="s1">)</span>
+<a name="l54"><span class="ln">54   </span></a>        <span class="s1">self.data.append(x)</span>
+<a name="l55"><span class="ln">55   </span></a>
+<a name="l56"><span class="ln">56   </span></a>    <span class="s3">def </span><span class="s1">get(self):</span>
+<a name="l57"><span class="ln">57   </span></a>        <span class="s3">return </span><span class="s1">self.data</span>
+<a name="l58"><span class="ln">58   </span></a>
+<a name="l59"><span class="ln">59   </span></a>    <span class="s3">async def </span><span class="s1">server(self, loop, host=HOST, port=PORT):</span>
+<a name="l60"><span class="ln">60   </span></a>
+<a name="l61"><span class="ln">61   </span></a>        <span class="s3">def </span><span class="s1">response():</span>
+<a name="l62"><span class="ln">62   </span></a>            <span class="s1">resp = </span><span class="s2">&quot;HTTP/1.1 200 OK</span><span class="s5">\r\n</span><span class="s2">&quot;</span>
+<a name="l63"><span class="ln">63   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;Content-Type: text/html</span><span class="s5">\r\n</span><span class="s2">&quot;</span>
+<a name="l64"><span class="ln">64   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;</span><span class="s5">\r\n</span><span class="s2">&quot;</span>
+<a name="l65"><span class="ln">65   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;html&gt;&quot;</span>
+<a name="l66"><span class="ln">66   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;meta http-equiv=</span><span class="s5">\&quot;</span><span class="s2">refresh</span><span class="s5">\&quot; </span><span class="s2">content=</span><span class="s5">\&quot;</span><span class="s2">{0}</span><span class="s5">\&quot;</span><span class="s2">/&gt;&quot;</span><span class="s1">.format(self.periodic_ttl)</span>
+<a name="l67"><span class="ln">67   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;title&gt;FAND | {0}&amp;deg;C | {1}&lt;/title&gt;&quot;</span><span class="s1">.format(round(self.t), self.fun.is_active)</span>
+<a name="l68"><span class="ln">68   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;body&gt;&lt;h3&gt;CPU temperature monitor version {0}&lt;/h3&gt;&lt;/body&gt;&quot;</span><span class="s1">.format(__version__)</span>
+<a name="l69"><span class="ln">69   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;temperature current: {0}&amp;deg;C on: {1}&amp;deg;C off: {2}&amp;deg;C fun state: {3}&quot;</span><span class="s1">.format(</span>
+<a name="l70"><span class="ln">70   </span></a>                <span class="s1">self.t, self.t_on, self.t_off, </span><span class="s2">'Off' </span><span class="s3">if </span><span class="s1">self.fun.is_active </span><span class="s3">is False else </span><span class="s2">'On'</span>
+<a name="l71"><span class="ln">71   </span></a>            <span class="s1">)</span>
+<a name="l72"><span class="ln">72   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;pre&gt;&quot;</span>
+<a name="l73"><span class="ln">73   </span></a>            <span class="s1">_data = copy.copy(self.get())</span>
+<a name="l74"><span class="ln">74   </span></a>            <span class="s1">_data.reverse()</span>
+<a name="l75"><span class="ln">75   </span></a>            <span class="s3">for </span><span class="s1">item </span><span class="s3">in </span><span class="s1">_data:</span>
+<a name="l76"><span class="ln">76   </span></a>                <span class="s3">if </span><span class="s1">item:</span>
+<a name="l77"><span class="ln">77   </span></a>                    <span class="s1">resp += str(item) + </span><span class="s2">'</span><span class="s5">\n</span><span class="s2">'</span>
+<a name="l78"><span class="ln">78   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;/pre&gt;&quot;</span>
+<a name="l79"><span class="ln">79   </span></a>            <span class="s1">resp += </span><span class="s2">&quot;&lt;/html&gt;&quot;</span>
+<a name="l80"><span class="ln">80   </span></a>            <span class="s3">return </span><span class="s1">resp</span>
+<a name="l81"><span class="ln">81   </span></a>
+<a name="l82"><span class="ln">82   </span></a>        <span class="s3">async def </span><span class="s1">handler(conn):</span>
+<a name="l83"><span class="ln">83   </span></a>            <span class="s1">req = </span><span class="s3">await </span><span class="s1">loop.sock_recv(conn, </span><span class="s4">1024</span><span class="s1">)</span>
+<a name="l84"><span class="ln">84   </span></a>
+<a name="l85"><span class="ln">85   </span></a>            <span class="s3">if </span><span class="s1">req:</span>
+<a name="l86"><span class="ln">86   </span></a>                <span class="s1">resp = response().encode()</span>
+<a name="l87"><span class="ln">87   </span></a>                <span class="s3">await </span><span class="s1">loop.sock_sendall(conn, resp)</span>
+<a name="l88"><span class="ln">88   </span></a>            <span class="s1">conn.close()</span>
+<a name="l89"><span class="ln">89   </span></a>
+<a name="l90"><span class="ln">90   </span></a>        <span class="s1">_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)</span>
+<a name="l91"><span class="ln">91   </span></a>        <span class="s1">_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, </span><span class="s4">1</span><span class="s1">)</span>
+<a name="l92"><span class="ln">92   </span></a>        <span class="s1">_socket.setblocking(</span><span class="s3">False</span><span class="s1">)</span>
+<a name="l93"><span class="ln">93   </span></a>        <span class="s1">_socket.bind((host, port))</span>
+<a name="l94"><span class="ln">94   </span></a>        <span class="s1">_socket.listen(</span><span class="s4">10</span><span class="s1">)</span>
+<a name="l95"><span class="ln">95   </span></a>
+<a name="l96"><span class="ln">96   </span></a>        <span class="s3">while True</span><span class="s1">:</span>
+<a name="l97"><span class="ln">97   </span></a>            <span class="s1">conn, addr = </span><span class="s3">await </span><span class="s1">loop.sock_accept(_socket)</span>
+<a name="l98"><span class="ln">98   </span></a>            <span class="s1">loop.create_task(handler(conn))</span>
+<a name="l99"><span class="ln">99   </span></a>
+<a name="l100"><span class="ln">100  </span></a>    <span class="s1">@asyncio.coroutine</span>
+<a name="l101"><span class="ln">101  </span></a>    <span class="s3">def </span><span class="s1">periodic(self):</span>
+<a name="l102"><span class="ln">102  </span></a>        <span class="s3">while True</span><span class="s1">:</span>
+<a name="l103"><span class="ln">103  </span></a>            <span class="s1">ts = datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()</span>
+<a name="l104"><span class="ln">104  </span></a>            <span class="s1">self.t = CPUTemperature().temperature</span>
+<a name="l105"><span class="ln">105  </span></a>
+<a name="l106"><span class="ln">106  </span></a>            <span class="s3">if </span><span class="s1">self.t &gt; self.t_on </span><span class="s3">and </span><span class="s1">self.fun.is_active </span><span class="s3">is False</span><span class="s1">:</span>
+<a name="l107"><span class="ln">107  </span></a>                <span class="s1">self.fun.on()</span>
+<a name="l108"><span class="ln">108  </span></a>
+<a name="l109"><span class="ln">109  </span></a>            <span class="s3">if </span><span class="s1">self.t &lt; self.t_off </span><span class="s3">and </span><span class="s1">self.fun.is_active </span><span class="s3">is True</span><span class="s1">:</span>
+<a name="l110"><span class="ln">110  </span></a>                <span class="s1">self.fun.off()</span>
+<a name="l111"><span class="ln">111  </span></a>
+<a name="l112"><span class="ln">112  </span></a>            <span class="s1">logstr = </span><span class="s2">'{0} {1} {2}'</span><span class="s1">.format(ts, self.t, </span><span class="s2">'Off' </span><span class="s3">if </span><span class="s1">self.fun.is_active </span><span class="s3">is False else </span><span class="s2">'On'</span><span class="s1">)</span>
+<a name="l113"><span class="ln">113  </span></a>            <span class="s1">print(logstr)</span>
+<a name="l114"><span class="ln">114  </span></a>            <span class="s1">self.append(logstr)</span>
+<a name="l115"><span class="ln">115  </span></a>            <span class="s3">yield from </span><span class="s1">asyncio.sleep(self.periodic_ttl)</span>
+<a name="l116"><span class="ln">116  </span></a>
+<a name="l117"><span class="ln">117  </span></a>    <span class="s1">@classmethod</span>
+<a name="l118"><span class="ln">118  </span></a>    <span class="s3">def </span><span class="s1">run(cls):</span>
+<a name="l119"><span class="ln">119  </span></a>        <span class="s1">monitor = cls()</span>
+<a name="l120"><span class="ln">120  </span></a>
+<a name="l121"><span class="ln">121  </span></a>        <span class="s1">task = asyncio.Task(monitor.periodic())</span>
+<a name="l122"><span class="ln">122  </span></a>        <span class="s1">loop = asyncio.get_event_loop()</span>
+<a name="l123"><span class="ln">123  </span></a>
+<a name="l124"><span class="ln">124  </span></a>        <span class="s3">try</span><span class="s1">:</span>
+<a name="l125"><span class="ln">125  </span></a>            <span class="s1">loop.run_until_complete(monitor.server(loop))</span>
+<a name="l126"><span class="ln">126  </span></a>            <span class="s1">loop.run_until_complete(task)</span>
+<a name="l127"><span class="ln">127  </span></a>            <span class="s1">loop.run_forever()</span>
+<a name="l128"><span class="ln">128  </span></a>
+<a name="l129"><span class="ln">129  </span></a>        <span class="s3">except </span><span class="s1">(asyncio.CancelledError, KeyboardInterrupt):</span>
+<a name="l130"><span class="ln">130  </span></a>            <span class="s3">pass</span>
+<a name="l131"><span class="ln">131  </span></a>
+<a name="l132"><span class="ln">132  </span></a>        <span class="s3">finally</span><span class="s1">:</span>
+<a name="l133"><span class="ln">133  </span></a>            <span class="s1">task.cancel()</span>
+<a name="l134"><span class="ln">134  </span></a>            <span class="s1">loop.call_later(</span><span class="s4">0</span><span class="s1">, task.cancel)</span>
+<a name="l135"><span class="ln">135  </span></a>            <span class="s1">loop.close()</span>
+<a name="l136"><span class="ln">136  </span></a>
+<a name="l137"><span class="ln">137  </span></a>
+<a name="l138"><span class="ln">138  </span></a><span class="s3">if </span><span class="s1">__name__ == </span><span class="s2">'__main__'</span><span class="s1">:</span>
+<a name="l139"><span class="ln">139  </span></a>    <span class="s1">CPUTemperatureMonitor.run()</span>
+<a name="l140"><span class="ln">140  </span></a>
+<a name="l141"><span class="ln">141  </span></a>
+<a name="l142"><span class="ln">142  </span></a></pre>
+</body>
+</html>
