@@ -14,7 +14,10 @@ setup(
     author_email="gusenkovvladimir@yandex.ru",
     license='BSD',
     install_requires=[
-        'gpiozero>=1.5'
+        'gpiozero>=1.5',
+        # Optional, improves asyncio performance if present
+        # Users on non-asyncio platforms can skip it
+        'uvloop>=0.17; platform_system!="Windows"'
     ],
     packages=find_packages(),
     scripts=['fand.py'],
@@ -22,5 +25,5 @@ setup(
         ('share/fand/', ['fand.service']),
     ],
     platforms="any",
-    python_requires='>=3.4'
+    python_requires='>=3.8'
 )

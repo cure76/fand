@@ -2,39 +2,38 @@
 # -*- coding: utf-8 -*-
 # vim: tabstop=8 expandtab shiftwidth=4 softtabstop=4
 
-__version__ = '.'.join(map(lambda i: "%s" % i, (0, 0, 1)))
+__version__ = '.'.join(map(lambda i: "%s" % i, (0, 0, 2)))
 
 import sys
-import copy
 import datetime
 import asyncio
 import socket
 import warnings
-
-from http.server import BaseHTTPRequestHandler
-from io import BytesIO
+from collections import deque
+from typing import Deque
 
 try:
     from gpiozero import CPUTemperature, LED
+except ImportError:  # pragma: no cover - fallback for non-RPi environments
+    warnings.warn("gpiozero not installed; using no-op fallbacks")
 
-except ImportError:
-    warnings.warn("Warning: gpiozero not installed")
+    class CPUTemperature:  # type: ignore
+        def __init__(self):
+            self.temperature = 0.0
+
+    class LED:  # type: ignore
+        def __init__(self, pin: int):
+            self.is_active = False
+
+        def on(self) -> None:
+            self.is_active = True
+
+        def off(self) -> None:
+            self.is_active = False
 
 
 HOST = '0.0.0.0'
 PORT = 9527
-
-
-class HTTPRequest(BaseHTTPRequestHandler):
-    def __init__(self, request_text):
-        self.rfile = BytesIO(request_text)
-        self.raw_requestline = self.rfile.readline()
-        self.error_code = self.error_message = None
-        self.parse_request()
-
-    def send_error(self, code, message):
-        self.error_code = code
-        self.error_message = message
 
 
 class CPUTemperatureMonitor(object):
@@ -45,47 +44,60 @@ class CPUTemperatureMonitor(object):
     t_off_offset = 10
 
     def __init__(self):
-        self.data = [None for i in range(self.logsize)]
+        self.data: Deque[str] = deque(maxlen=self.logsize)
         self.fun = LED(14)
         self.t_off = self.t_on - self.t_off_offset
+        self._cpu = CPUTemperature()
+        self._response_bytes: bytes = b""
 
-    def append(self, x):
-        self.data.pop(0)
+    def append(self, x: str) -> None:
         self.data.append(x)
 
     def get(self):
-        return self.data
+        return list(self.data)
+
+    def _build_response_bytes(self) -> bytes:
+        title = f"FAND | {round(self.t)}&deg;C | {self.fun.is_active}"
+        lines = [
+            "<html>",
+            f"<meta http-equiv=\"refresh\" content=\"{self.periodic_ttl}\"/>",
+            f"<title>{title}</title>",
+            f"<body><h3>CPU temperature monitor version {__version__}</h3>",
+            (
+                f"temperature current: {self.t}&deg;C "
+                f"on: {self.t_on}&deg;C "
+                f"off: {self.t_off}&deg;C "
+                f"fun state: {'Off' if self.fun.is_active is False else 'On'}"
+            ),
+            "<pre>",
+        ]
+
+        for item in reversed(self.data):
+            if item:
+                lines.append(str(item))
+
+        lines += [
+            "</pre>",
+            "</body>",
+            "</html>",
+        ]
+
+        body = "\n".join(lines).encode()
+        headers = (
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/html; charset=utf-8\r\n"
+            + f"Content-Length: {len(body)}\r\n".encode()
+            + b"Connection: close\r\n\r\n"
+        )
+        return headers + body
 
     async def server(self, loop, host=HOST, port=PORT):
-
-        def response():
-            resp = "HTTP/1.1 200 OK\r\n"
-            resp += "Content-Type: text/html\r\n"
-            resp += "\r\n"
-            resp += "<html>"
-            resp += "<meta http-equiv=\"refresh\" content=\"{0}\"/>".format(self.periodic_ttl)
-            resp += "<title>FAND | {0}&deg;C | {1}</title>".format(round(self.t), self.fun.is_active)
-            resp += "<body><h3>CPU temperature monitor version {0}</h3></body>".format(__version__)
-            resp += "temperature current: {0}&deg;C on: {1}&deg;C off: {2}&deg;C fun state: {3}".format(
-                self.t, self.t_on, self.t_off, 'Off' if self.fun.is_active is False else 'On'
-            )
-            resp += "<pre>"
-            _data = copy.copy(self.get())
-            _data.reverse()
-            for item in _data:
-                if item:
-                    resp += str(item) + '\n'
-            resp += "</pre>"
-            resp += "</html>"
-            return resp
-
         async def handler(conn):
-            req = await loop.sock_recv(conn, 1024)
-
-            if req:
-                resp = response().encode()
-                await loop.sock_sendall(conn, resp)
-            conn.close()
+            try:
+                await loop.sock_recv(conn, 1024)
+                await loop.sock_sendall(conn, self._response_bytes)
+            finally:
+                conn.close()
 
         _socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         _socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -94,45 +106,52 @@ class CPUTemperatureMonitor(object):
         _socket.listen(10)
 
         while True:
-            conn, addr = await loop.sock_accept(_socket)
+            conn, _addr = await loop.sock_accept(_socket)
             loop.create_task(handler(conn))
 
-    @asyncio.coroutine
-    def periodic(self):
+    async def periodic(self):
         while True:
-            ts = datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat()
-            self.t = CPUTemperature().temperature
+            ts = datetime.datetime.now().isoformat()
+            self.t = self._cpu.temperature
 
             if self.t > self.t_on and self.fun.is_active is False:
                 self.fun.on()
-
-            if self.t < self.t_off and self.fun.is_active is True:
+            elif self.t < self.t_off and self.fun.is_active is True:
                 self.fun.off()
 
-            logstr = '{0} {1} {2}'.format(ts, self.t, 'Off' if self.fun.is_active is False else 'On')
+            log_state = 'Off' if self.fun.is_active is False else 'On'
+            logstr = f"{ts} {self.t} {log_state}"
             print(logstr)
             self.append(logstr)
-            yield from asyncio.sleep(self.periodic_ttl)
+
+            # Refresh cached HTTP response after data change
+            self._response_bytes = self._build_response_bytes()
+
+            await asyncio.sleep(self.periodic_ttl)
 
     @classmethod
     def run(cls):
         monitor = cls()
 
-        task = asyncio.Task(monitor.periodic())
-        loop = asyncio.get_event_loop()
+        async def main():
+            loop = asyncio.get_running_loop()
+            # Initialize cached response before serving
+            monitor._response_bytes = monitor._build_response_bytes()
+            server_task = asyncio.create_task(monitor.server(loop))
+            periodic_task = asyncio.create_task(monitor.periodic())
+            await asyncio.gather(server_task, periodic_task)
 
         try:
-            loop.run_until_complete(monitor.server(loop))
-            loop.run_until_complete(task)
-            loop.run_forever()
+            # Try to enable uvloop if present for better performance
+            try:
+                import uvloop  # type: ignore
+                asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            except Exception:
+                pass
 
-        except (asyncio.CancelledError, KeyboardInterrupt):
+            asyncio.run(main())
+        except KeyboardInterrupt:
             pass
-
-        finally:
-            task.cancel()
-            loop.call_later(0, task.cancel)
-            loop.close()
 
 
 if __name__ == '__main__':
